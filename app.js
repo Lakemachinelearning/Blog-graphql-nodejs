@@ -11,6 +11,39 @@ const app = express();
 
 app.use(bodyParser.json());
 
+
+const articles = async articleIds => {
+    try{
+  const articles = await Article.find({ _id: { $in: articleIds } })
+  articles.map(article => {
+        return {
+           ...article._doc,
+           _id: article.id,
+           creator: user.bind(this, article.creator)
+        };
+      });
+      return articles;
+    } catch (err) {
+      throw err;
+    }
+};
+
+
+const user = async userId => {
+    try{
+  const user = await User.findById(userId)
+      return {
+        ...user._doc,
+        _id: user.id,
+        createdArticles: articles.bind(this, user._doc.createdArticles)
+      };
+    } catch(err) {
+      throw err;
+    };
+}
+
+
+
 app.use('/api', graphqlHttp({
   schema: buildSchema(`
 
@@ -20,12 +53,14 @@ app.use('/api', graphqlHttp({
       description: String!
       author: String!
       date: String!
+      creator: User!
     }
 
     type User {
       _id: ID!
       email: String!
       password: String
+      createdArticles: [Article!]
     }
 
     input ArticleInput {
@@ -57,18 +92,23 @@ app.use('/api', graphqlHttp({
 
 
   rootValue: {
-    articles: () => {
-     return Article.find()
-      .then(articles => {
-        return articles.map(article => {
-          return { ...article._doc, _id: article.id };
-        });
-      })
-      .catch(err => {
-        throw err;
-      })
+    articles: async () => {
+        try{
+     const articles = await Article.find()
+       return articles.map(article => {
+          return {
+             ...article._doc,
+             _id: article.id,
+             creator: user.bind(this, article._doc.creator)
+           };
+       })
+     } catch (err) {
+       throw err;
+     }
     },
-    createArticle: (args) => {
+
+
+    createArticle: async (args) => {
       const article = new Article({
         title: args.articleInput.title,
         description: args.articleInput.description,
@@ -78,48 +118,46 @@ app.use('/api', graphqlHttp({
       });
 
       let createdArticle;
-      return article
+        try {
+      const result = await article
       .save()
-      .then(result => {
-        createdArticle = {...result._doc, _id: result.id};
-        return User.findById('5e9cb9a124647626f9c9b298')
-      })
-      .then(user => {
-        if (!user) {
+        createdArticle = {
+          ...result._doc,
+          _id: result.id,
+          creator: user.bind(this, result._doc.creator)
+        };
+        const creator = await User.findById('5e9cb9a124647626f9c9b298');
+
+        if (!creator) {
           throw new Error('User not found.');
         }
         user.createdArticles.push(article);
-        return user.save();
-      })
-      .then(result => {
+        await creator.save();
+
         return createdArticle;
-      })
-      .catch(err => {
-        console.log(err)
+      } catch (err) {
         throw err;
-      });
+      }
     },
 
-    createUser: (args) => {
-      return User.findOne({email: args.userInput.email}).then(user => {
-        if (user) {
+
+    createUser: async (args) => {
+        try {
+      const existingUser = await User.findOne({email: args.userInput.email})
+        if (existingUser) {
           throw new Error('User already exists...')
         }
-        return bcrypt.hash(args.userInput.password, 12)
-        })
-        .then(hashedPassword => {
+        const hashedPassword = await bcrypt.hash(args.userInput.password, 12)
           const user = new User({
             email: args.userInput.email,
             password: hashedPassword,
           });
-          return user.save();
-        })
-        .then(result => {
+          const result = await user.save();
+
           return {...result._doc, password: null, _id: result.id }
-        })
-        .catch(err => {
+        } catch (err) {
           throw err;
-        })
+        }
     }
   },
   graphiql: true
