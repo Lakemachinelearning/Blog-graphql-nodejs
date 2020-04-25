@@ -6,26 +6,40 @@ const mongoose = require('mongoose');
 const Article = require('./models/article');
 const User = require('./models/user');
 const bcrypt = require('bcryptjs');
+const Like = require('./models/like');
 
 const app = express();
 
 app.use(bodyParser.json());
 
-
+// Populate functions - helpers in resolvers
 const articles = async articleIds => {
     try{
   const articles = await Article.find({ _id: { $in: articleIds } })
-  articles.map(article => {
+  return articles.map(article => {
         return {
            ...article._doc,
            _id: article.id,
            creator: user.bind(this, article.creator)
         };
       });
-      return articles;
     } catch (err) {
       throw err;
     }
+};
+
+
+const singleArticle = async (articleId) => {
+  try{
+    const article = await Article.findById(articleId);
+    return {
+      ...article._doc,
+      _id: article.id,
+      creator: user.bind(this, article.creator)
+    }
+  } catch(err) {
+    throw err;
+  }
 };
 
 
@@ -43,9 +57,15 @@ const user = async userId => {
 }
 
 
-
+// GRAPHQL schema
 app.use('/api', graphqlHttp({
   schema: buildSchema(`
+
+    type Like {
+      _id: ID!
+      article: Article!
+      user: User!
+    }
 
     type Article {
       _id: ID!
@@ -54,6 +74,8 @@ app.use('/api', graphqlHttp({
       author: String!
       date: String!
       creator: User!
+      createdAt: String!
+      updatedAt: String!
     }
 
     type User {
@@ -61,6 +83,12 @@ app.use('/api', graphqlHttp({
       email: String!
       password: String
       createdArticles: [Article!]
+    }
+
+    type AuthData {
+      userId: ID!
+      token: String!
+      tokenExpiration: Int!
     }
 
     input ArticleInput {
@@ -77,11 +105,15 @@ app.use('/api', graphqlHttp({
 
     type RootQuery {
       articles: [Article!]!
+      likes: [Like!]!
+      login(email: String!, password: String!): AuthData!
     }
 
     type RootMutation {
       createArticle(articleInput: ArticleInput): Article
       createUser(userInput: UserInput): User
+      likeArticle(articleId: ID!): Like
+      cancelLike(likeId: ID!): Article!
     }
 
     schema {
@@ -90,7 +122,7 @@ app.use('/api', graphqlHttp({
     }
   `),
 
-
+  // RESOLVERS
   rootValue: {
     articles: async () => {
         try{
@@ -99,7 +131,9 @@ app.use('/api', graphqlHttp({
           return {
              ...article._doc,
              _id: article.id,
-             creator: user.bind(this, article._doc.creator)
+             creator: user.bind(this, article._doc.creator),
+             createdAt: new Date(article._doc.createdAt).toISOString(),
+             updatedAt: new Date(article._doc.createdAt).toISOString(),
            };
        })
      } catch (err) {
@@ -108,14 +142,35 @@ app.use('/api', graphqlHttp({
     },
 
 
+
+    likes: async () => {
+      try{
+        const likes = await Like.find();
+        return likes.map(like => {
+          return {
+            ...like._doc,
+            _id: like.id,
+            user: user.bind(this, like._doc.user),
+            article: singleArticle.bind(this, like._doc.article)
+          }
+        });
+      } catch (er){
+        throw err;
+      }
+    },
+
+
+
     createArticle: async (args) => {
-      const article = new Article({
-        title: args.articleInput.title,
-        description: args.articleInput.description,
-        author: args.articleInput.author,
-        date: new Date(args.articleInput.date),
-        creator: '5e9cb9a124647626f9c9b298'
-      });
+      const article = new Article(
+        {
+          title: args.articleInput.title,
+          description: args.articleInput.description,
+          author: args.articleInput.author,
+          date: new Date(args.articleInput.date),
+          creator: '5e9cb9a124647626f9c9b298'
+        }
+      );
 
       let createdArticle;
         try {
@@ -124,6 +179,7 @@ app.use('/api', graphqlHttp({
         createdArticle = {
           ...result._doc,
           _id: result.id,
+          date: new Date(article._doc.date).toISOString(),
           creator: user.bind(this, result._doc.creator)
         };
         const creator = await User.findById('5e9cb9a124647626f9c9b298');
@@ -158,7 +214,53 @@ app.use('/api', graphqlHttp({
         } catch (err) {
           throw err;
         }
-    }
+    },
+
+
+    likeArticle: async (args) => {
+        const fetchedArticle = await Article.findOne({ _id: args.articleId});
+      const like = new Like(
+        {
+          user: '5e9cb9a124647626f9c9b298',
+          article: fetchedArticle
+        }
+      );
+      const result = await like.save();
+      return {
+          ...result._doc,
+          _id: result._id,
+          user: user.bind(this, like._doc.user),
+          article: singleArticle.bind(this, like._doc.article)
+      }
+    },
+
+    cancelLike: async (args) => {
+      try {
+        const like = await Like.findById(args.likeId).populate('article')
+        const article = {
+          ...like.article._doc,
+          _id: like.article.id,
+          creator: user.bind(this, like.article._doc.creator)
+        };
+        await Like.deleteOne({ _id: args.likeId });
+        return article;
+      } catch (err) {
+        throw err;
+      }
+    },
+
+
+    login: async (args) => {
+      const user = User.findOne({email: email});
+      if (!user) {
+        throw new Error('Invalid Credentials...')
+      }
+      const isEqual = await bcrypt.compare(password, user.password);
+      if(!isEqual) {
+        throw new Error('Invalid Credentials...')
+      }
+    },
+
   },
   graphiql: true
 
