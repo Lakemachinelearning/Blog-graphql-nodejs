@@ -273,7 +273,7 @@ app.use('/api', graphqlHttp({
       }
       const token = jwt.sign(
         { userId: user.id, email: user.email },
-        'somesupersecretkey',
+        process.env.SOMESUPERSECRET_KEY,
         {
           expiresIn: '1h'
         }
