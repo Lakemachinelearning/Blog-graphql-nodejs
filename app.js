@@ -7,10 +7,14 @@ const Article = require('./models/article');
 const User = require('./models/user');
 const bcrypt = require('bcryptjs');
 const Like = require('./models/like');
+const jwt = require('jsonwebtoken');
+const isAuth = require('./middleware/isAuth');
 
 const app = express();
 
 app.use(bodyParser.json());
+
+app.use(isAuth);
 
 // Populate functions - helpers in resolvers
 const articles = async articleIds => {
@@ -161,14 +165,17 @@ app.use('/api', graphqlHttp({
 
 
 
-    createArticle: async (args) => {
+    createArticle: async (args, req) => {
+        if (!req.isAuth) {
+          throw new Error('Unauthenticated!');
+        }
       const article = new Article(
         {
           title: args.articleInput.title,
           description: args.articleInput.description,
           author: args.articleInput.author,
           date: new Date(args.articleInput.date),
-          creator: '5e9cb9a124647626f9c9b298'
+          creator: req.userId
         }
       );
 
@@ -182,7 +189,7 @@ app.use('/api', graphqlHttp({
           date: new Date(article._doc.date).toISOString(),
           creator: user.bind(this, result._doc.creator)
         };
-        const creator = await User.findById('5e9cb9a124647626f9c9b298');
+        const creator = await User.findById(req.userId);
 
         if (!creator) {
           throw new Error('User not found.');
@@ -217,11 +224,14 @@ app.use('/api', graphqlHttp({
     },
 
 
-    likeArticle: async (args) => {
+    likeArticle: async (args, req) => {
+        if (!req.isAuth) {
+          throw new Error('Unauthenticated!');
+        }
         const fetchedArticle = await Article.findOne({ _id: args.articleId});
       const like = new Like(
         {
-          user: '5e9cb9a124647626f9c9b298',
+          user: req.userId,
           article: fetchedArticle
         }
       );
@@ -234,7 +244,10 @@ app.use('/api', graphqlHttp({
       }
     },
 
-    cancelLike: async (args) => {
+    cancelLike: async (args, req) => {
+      if (!req.isAuth) {
+        throw new Error('Unauthenticated!');
+      }
       try {
         const like = await Like.findById(args.likeId).populate('article')
         const article = {
@@ -249,9 +262,8 @@ app.use('/api', graphqlHttp({
       }
     },
 
-
-    login: async (args) => {
-      const user = User.findOne({email: email});
+    login: async ({email, password}) => {
+      const user = await User.findOne({email: email});
       if (!user) {
         throw new Error('Invalid Credentials...')
       }
@@ -259,6 +271,14 @@ app.use('/api', graphqlHttp({
       if(!isEqual) {
         throw new Error('Invalid Credentials...')
       }
+      const token = jwt.sign(
+        { userId: user.id, email: user.email },
+        'somesupersecretkey',
+        {
+          expiresIn: '1h'
+        }
+      );
+      return { userId: user.id, token: token, tokenExpiration: 1 };
     },
 
   },
